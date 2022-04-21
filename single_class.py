@@ -33,13 +33,15 @@ class Pev:
         self.e_max = e_max
         self.p_max = p_max
         self.sim = sim
-        self.sim.pevs.append(
+        self.sim.temp_pevs.append(
             {
+                "pev": i,
                 "soc_i": soc_i,
-                "mean_power": None,
+                "charger": 0,
                 "arrival_time": None,
                 "start_time": None,
                 "departure_time": None,
+                "mean_power": None,
                 "blocked": False
             }
         )
@@ -54,40 +56,52 @@ class Pev:
             t1 = (self.e_c-e_i)/self.p_max
             e_i = self.e_c
         t2 = log((m1-n1*e_i)/(m1-n1*self.e_r),10.0)/n1
-        self.sim.pevs[self.i-1]["mean_power"] = (self.p_max*t1+(self.p_max+m1-n1*self.e_r)*t2/2.0)/(t1+t2)
+        self.sim.temp_pevs[self.i-1]["mean_power"] = (self.p_max*t1+(2*m1-n1*(self.e_r+e_i))*t2/2.0)/(t1+t2)
         return (t1+t2)*60.0
     
     def go_to_charging_station(self, env, charging_station: 'ChargingStation'):
         # at this point the PEV in question has just pulled up to the charging station
-        self.sim.pevs[self.i-1]["arrival_time"] = env.now
+        self.sim.temp_pevs[self.i-1]["arrival_time"] = env.now
         # check if there are any empty spaces near chargers or in the waiting spaces
         if len(charging_station.charger.queue) < charging_station.waiting_space_capacity:
             with charging_station.charger.request() as request:
                 yield request
                 # at this point the PEV in question is near the charger
-                self.sim.pevs[self.i-1]["start_time"] = env.now
+                for i in range(1,charging_station.charger.capacity+1):
+                    if charging_station.charger_availability[i-1]:
+                        self.sim.temp_pevs[self.i-1]["charger"] = i
+                        break
+                self.sim.temp_pevs[self.i-1]["start_time"] = env.now
                 yield env.process(charging_station.charge_pev(self))
         else:
             # at this point the PEV in question has no place to park so it is blocked
-            self.sim.pevs[self.i-1]["blocked"] = True
+            self.sim.temp_pevs[self.i-1]["blocked"] = True
         # at this point the PEV in question is charged and is leaving the charging station
-        self.sim.pevs[self.i-1]["departure_time"] = env.now
+        self.sim.temp_pevs[self.i-1]["departure_time"] = env.now
 
 class ChargingStation:
     def __init__(self, env, s, r):
         self.env = env
         self.charger = Resource(env, s)
+        self.charger_availability = list()
+        for _ in range(s):
+            self.charger_availability.append(True)
         self.waiting_space_capacity = r
     
     def charge_pev(self, pev: Pev):
+        for i in range(self.charger.capacity):
+            if self.charger_availability[i]:
+                self.charger_availability[i] = False
+                occupied_charger = i
+                break
         # wait time until PEV is charged
         yield self.env.timeout(pev.get_charge_time())
+        self.charger_availability[occupied_charger] = True
 
 # this is the main class of the simulation
 # when it is initialized, the simulation is run automatically
 class Simulation:
-    def __init__(self,env,pev_num,lam,s,r,soc_r,soc_i_mu=SOC_I_MU,soc_i_sigma=SOC_I_SIGMA,p_max=P_MAX,e_max=E_MAX,e_c=E_C):
-        self.env = env
+    def __init__(self,pev_num,lam,s,r,soc_rs,soc_i_mu=SOC_I_MU,soc_i_sigma=SOC_I_SIGMA,p_max=P_MAX,e_max=E_MAX,e_c=E_C):
         self.pev_num = pev_num
         self.lam = lam
         self.s = s
@@ -97,12 +111,18 @@ class Simulation:
         self.p_max = p_max
         self.e_max = e_max
         self.e_c = e_c
-        self.soc_r=soc_r
-        self.pevs = list()
-        stop_event = Event(env)
-        env.process(self.run_charging_station(stop_event=stop_event))
-        self.env.run(stop_event)
-        self.pevs = pd.DataFrame(self.pevs)
+        self.soc_rs=soc_rs
+        self.pevs = dict()
+        for soc_r in self.soc_rs:
+            self.env = Environment()
+            self.temp_pevs = list()
+            self.soc_r = soc_r
+            stop_event = Event(self.env)
+            self.env.process(self.run_charging_station(stop_event=stop_event))
+            self.env.run(stop_event)
+            self.temp_pevs = pd.DataFrame(self.temp_pevs)
+            self.temp_pevs.set_index("pev", inplace = True)
+            self.pevs[soc_r] = self.temp_pevs
 
     # process function for the simulation to run until a specified number of PEVs is charged
     def run_charging_station(self, stop_event):
@@ -122,17 +142,25 @@ class Simulation:
                 # wait until all PEVs that are smaller than or equal to pev_num are charged and stop simulation
                 admission = False
                 if charging_station.charger.count == 0:
+                    #! this is assuming that all the charging is done in 120 minutes
+                    yield self.env.timeout(120)
                     stop_event.succeed()
     
     def get_mean_charging_time(self):
         #TODO add calculation results too
-        temp = self.pevs[self.pevs["blocked"]==False]
-        return (temp["departure_time"]-temp["start_time"]).mean()
+        temp1 = dict()
+        for soc_r in self.soc_rs:
+            temp2 = self.pevs[soc_r][self.pevs[soc_r]["blocked"]==False]
+            temp1[soc_r] = (temp2["departure_time"]-temp2["start_time"]).mean()
+        return temp1
     
     def get_mean_charging_power(self):
         #TODO add calculation results too
-        temp = self.pevs[self.pevs["blocked"]==False]
-        return temp["mean_power"].mean()
+        temp1 = dict()
+        for soc_r in self.soc_rs:
+            temp2 = self.pevs[soc_r][self.pevs[soc_r]["blocked"]==False]
+            temp1[soc_r] = temp2["mean_power"].mean()
+        return temp1
     
     def get_traffic_intensity(self):
         #TODO add calculation results too
@@ -141,12 +169,18 @@ class Simulation:
     
     def get_blocking_probability(self):
         #TODO add calculation results too
-        return len(self.pevs[self.pevs["blocked"]==True].index)/len(self.pevs.index)
+        temp = dict()
+        for soc_r in self.soc_rs:
+            temp[soc_r] = len(self.pevs[soc_r][self.pevs[soc_r]["blocked"]==True].index)/len(self.pevs[soc_r].index)
+        return temp
     
     def get_mean_waiting_time(self):
         #TODO add calculation results too
-        temp = self.pevs[self.pevs["blocked"]==False]
-        return (temp["start_time"]-temp["arrival_time"]).mean()
+        temp1 = dict()
+        for soc_r in self.soc_rs:
+            temp2 = self.pevs[soc_r][self.pevs[soc_r]["blocked"]==False]
+            temp1[soc_r] = (temp2["start_time"]-temp2["arrival_time"]).mean()
+        return temp1
     
     def get_system_revenue(self):
         #TODO add calculation results too
@@ -154,18 +188,16 @@ class Simulation:
         return
 
     def get_results(self):
-        return(self.pevs)
+        return self.pevs
 
 if __name__ == "__main__":
     #? env = RealtimeEnvironment(factor=0.1,strict=False)
-    env = Environment()
     sim = Simulation(
-        env=env,
         pev_num=500,
         lam=10,
         s=7,
         r=3,
-        soc_r=0.95
+        soc_rs=[0.60, 0.65, 0.70, 0.75, 0.80,0.85,0.90,0.95,0.99]
     )
     print(sim.get_results())
     print(sim.get_mean_charging_time())
