@@ -201,7 +201,7 @@ class Simulation:
     def get_mean_charging_time2(self):
         temp1 = dict()
         for soc_r2 in self.soc_rs:
-            temp2 = self.pevs2[soc_r2][self.pevs1[soc_r2]["blocked"]==False]
+            temp2 = self.pevs2[soc_r2][self.pevs2[soc_r2]["blocked"]==False]
             temp1[soc_r2] = (temp2["departure_time"]-temp2["start_time"]).mean()
         return temp1
     
@@ -257,7 +257,7 @@ class Simulation:
         #TODO add calculation results too
         temp1 = dict()
         for soc_r2 in self.soc_rs:
-            temp2 = self.pevs2[soc_r2][self.pevs[soc_r2]["blocked"]==False]
+            temp2 = self.pevs2[soc_r2][self.pevs2[soc_r2]["blocked"]==False]
             temp1[soc_r2] = (temp2["start_time"]-temp2["arrival_time"]).mean()
         return temp1
     
