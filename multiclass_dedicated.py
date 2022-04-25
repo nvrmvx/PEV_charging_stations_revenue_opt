@@ -8,7 +8,7 @@ from simpy import Resource
 from simpy.events import Event
 
 theta1 = 0.75
-theta2 = 1-0.75
+theta2 = 1-theta1
 SOC_I_MU = 0.3
 SOC_I_SIGMA = 0.15
 P1_MAX = 45
