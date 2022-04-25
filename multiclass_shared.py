@@ -1,6 +1,7 @@
 from math import log
 import pandas as pd
 import random
+import matplotlib.pyplot as plt
 
 from simpy import Environment
 from simpy.rt import RealtimeEnvironment
@@ -22,7 +23,7 @@ BATT_DEG = {"a": 0.004,"b": 0.075,"c": 0.003}
 REWARD = {"m": 9,"n": 1}
 C_W = 20
 
-T_CH_COEFFICIENT = 2
+T_CH_COEFFICIENT = 6
 
 class Pev:
     def __init__(self, soc_r, i, e_c, p_max, sim: 'Simulation'):
@@ -125,7 +126,7 @@ class Simulation:
         self.p1_max = p1_max
         self.e_max = e_max
         self.e1_c = e1_c
-        self.soc_rs=soc_rs
+        self.soc_r1=soc_rs
         self.pevs1 = dict()
         for lam1 in self.lam:
             self.env = Environment()
@@ -144,6 +145,7 @@ class Simulation:
         self.p2_max = p2_max
         self.e_max = e_max
         self.e2_c = e2_c
+        self.soc_r2=soc_rs
         self.pevs2 = dict()
         for lam2 in self.lam:
             self.env = Environment()
@@ -167,7 +169,7 @@ class Simulation:
             i1 += 1
             if charging_station.admission:
                 # create a new PEV in the simulation and send it to the charging station
-                pev1 = Pev(self.soc_rs, i1, self.e1_c, self.p1_max, self)
+                pev1 = Pev(self.soc_r1, i1, self.e1_c, self.p1_max, self)
                 self.env.process(pev1.go_to_charging_station(self.env,charging_station))
             if i1 >= self.pev1_num:
                 charging_station.admission = False
@@ -182,8 +184,8 @@ class Simulation:
             i2 += 1
             if charging_station.admission:
                 # create a new PEV in the simulation and send it to the charging station
-                pev1 = Pev(self.soc_rs, i2, self.e1_c, self.p2_max, self)
-                self.env.process(pev1.go_to_charging_station(self.env,charging_station))
+                pev2 = Pev(self.soc_r2, i2, self.e2_c, self.p2_max, self)
+                self.env.process(pev2.go_to_charging_station(self.env,charging_station))
             if i2 >= self.pev2_num:
                 charging_station.admission = False
     
@@ -224,6 +226,9 @@ class Simulation:
         mu_over_1 = self.get_mean_charging_time1()
         for lam1 in self.lam:
             temp[lam1] = mu_over_1[lam1]*self.lam1/(60*self.s)
+        plt.subplot(3,2,1)
+        plt.plot(list(temp.keys()), list(temp.values()))
+        plt.show()
         return temp
     
     def get_traffic_intensity2(self):
@@ -232,6 +237,9 @@ class Simulation:
         mu_over_1 = self.get_mean_charging_time2()
         for lam2 in self.lam:
             temp[lam2] = mu_over_1[lam2]*self.lam2/(60*self.s)
+        plt.subplot(3,2,2)
+        plt.plot(list(temp.keys()), list(temp.values()))
+        plt.show()
         return temp
     
     def get_blocking_probability1(self):
@@ -239,6 +247,9 @@ class Simulation:
         temp1 = dict()
         for lam1 in self.lam:
             temp1[lam1] = len(self.pevs1[lam1][self.pevs1[lam1]["blocked"]==True].index)/len(self.pevs1[lam1].index)
+        plt.subplot(3,2,3)
+        plt.plot(list(temp1.keys()), list(temp1.values()))
+        plt.show()
         return temp1
 
     def get_blocking_probability2(self):
@@ -246,6 +257,9 @@ class Simulation:
         temp2 = dict()
         for lam2 in self.lam:
             temp2[lam2] = len(self.pevs2[lam2][self.pevs2[lam2]["blocked"]==True].index)/len(self.pevs2[lam2].index)
+        plt.subplot(3,2,4)
+        plt.plot(list(temp2.keys()), list(temp2.values()))
+        plt.show()
         return temp2
     
     def get_mean_waiting_time1(self):
@@ -274,7 +288,10 @@ class Simulation:
         for lam1 in self.lam:
             temp2 = self.pevs1[lam1][self.pevs1[lam1]["blocked"]==False]
             mean_c_batt = temp2["c_batt"].mean()
-            temp1[lam1] = self.lam1*(1-p_k[lam1])*(reward(lam1)-self.c_w*mean_t_w[lam1]/60.0-mean_c_batt*mean_t_ch[lam1]/60.0)
+            temp1[lam1] = theta1*self.lam1*(1-p_k[lam1])*(reward(lam1*theta2)-self.c_w*mean_t_w[lam1]/60.0-mean_c_batt*mean_t_ch[lam1]/60.0)
+        plt.subplot(3,2,5)
+        plt.plot(list(temp1.keys()), list(temp1.values()))
+        plt.show()
         return temp1
 
     def get_system_revenue2(self):
@@ -287,7 +304,10 @@ class Simulation:
         for lam2 in self.lam:
             temp2 = self.pevs2[lam2][self.pevs2[lam2]["blocked"]==False]
             mean_c_batt = temp2["c_batt"].mean()
-            temp1[lam2] = self.lam2*(1-p_k[lam2])*(reward(lam2)-self.c_w*mean_t_w[lam2]/60.0-mean_c_batt*mean_t_ch[lam2]/60.0)
+            temp1[lam2] = theta2*self.lam2*(1-p_k[lam2])*(reward(lam2*theta2)-self.c_w*mean_t_w[lam2]/60.0-mean_c_batt*mean_t_ch[lam2]/60.0)
+        plt.subplot(3,2,6)
+        plt.plot(list(temp1.keys()), list(temp1.values()))
+        plt.show()
         return temp1
 
     def get_results1(self):
