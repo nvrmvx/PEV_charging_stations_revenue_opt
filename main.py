@@ -1,6 +1,8 @@
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 import tkinter as tk
+from collections import defaultdict
+from simpy.rt import RealtimeEnvironment
 
 import single_class
 import multiclass_dedicated
@@ -12,6 +14,7 @@ MODEL_NAMES = [
     "Multi-Class Shared Model"
 ]
 XLABEL = "Requested SoC (%)"
+LEGEND = ["Numerical result","Simulation Result"]
 
 def validate_value(val: str):
     try:
@@ -32,13 +35,6 @@ def validate_value_with_commas(val: str):
 class SingleClassWindow:
     def __init__(self,root_window: "RootWindow"):
         self.sim = None
-        self.a1 = None
-        self.a2 = None
-        self.a3 = None
-        self.a4 = None
-        self.a5 = None
-        self.a6 = None
-        self.data_plot = None
         self.root_window = root_window
         self.window = tk.Toplevel(self.root_window.root)
         self.window.title("Single Class Model Simulation Configuration")
@@ -156,7 +152,30 @@ class SingleClassWindow:
         sim_button.grid(column=1,row=5,padx=10,pady=5)
     
     def open_result_window(self):
-        #TODO do validity checks for empty parameters
+        if self.soc_rs_val.get() == "":
+            return
+        try:
+            self.pev_num_val.get()
+            self.lam_val.get()
+            self.s_val.get()
+            self.r_val.get()
+            self.soc_i_mu_val.get()
+            self.soc_i_sigma_val.get()
+            self.p_max_val.get()
+            self.e_max_val.get()
+            self.e_c_val.get()
+            self.batt_deg_a_val.get()
+            self.batt_deg_b_val.get()
+            self.batt_deg_c_val.get()
+            self.reward_m_val.get()
+            self.reward_n_val.get()
+            self.c_w_val.get()
+            self.t_ch_coefficient_val.get()
+        except tk.TclError:
+            return
+        if self.root_window.model_visual_window:
+            self.root_window.model_visual_window.destroy()
+            self.root_window.model_visual_window = None
         if self.root_window.model_result_window:
             self.root_window.model_result_window.destroy()
             self.root_window.model_result_window = None
@@ -217,14 +236,19 @@ class SingleClassWindow:
         self.a1.set_xlabel(XLABEL)
         self.a1.set_ylabel("Mean charging time (minutes)")
         self.a1.plot(list(a1_dict.keys()),list(a1_dict.values()))
+        self.a1.stem(list(a1_dict.keys()),list(a1_dict.values()),use_line_collection=True,bottom=-1,linefmt="C3-",markerfmt="C3o")
+        self.a1.legend(LEGEND)
         self.a1.set_xticks(self.sim.soc_rs)
         self.a1.set_ylim(0,None)
         self.a1.set_xlim(None,self.sim.soc_rs[-1])
-        a2_dict = self.sim.get_mean_charging_power()
+        a2_dict = self.sim.get_mean_charging_power(numerical=True)
+        a2_dict2 = self.sim.get_mean_charging_power()
         self.a2.cla()
         self.a2.set_xlabel(XLABEL)
         self.a2.set_ylabel("Mean charging power (kWh)")
         self.a2.plot(list(a2_dict.keys()),list(a2_dict.values()))
+        self.a2.stem(list(a2_dict2.keys()),list(a2_dict2.values()),use_line_collection=True,bottom=-1,linefmt="C3-",markerfmt="C3o")
+        self.a2.legend(LEGEND)
         self.a2.set_xticks(self.sim.soc_rs)
         self.a2.set_ylim(0,None)
         self.a2.set_xlim(None,self.sim.soc_rs[-1])
@@ -233,22 +257,30 @@ class SingleClassWindow:
         self.a3.set_xlabel(XLABEL)
         self.a3.set_ylabel("Traffic intensity (cars per minute)")
         self.a3.plot(list(a3_dict.keys()),list(a3_dict.values()))
+        self.a3.stem(list(a3_dict.keys()),list(a3_dict.values()),use_line_collection=True,bottom=-1,linefmt="C3-",markerfmt="C3o")
+        self.a3.legend(LEGEND)
         self.a3.set_xticks(self.sim.soc_rs)
         self.a3.set_ylim(0,None)
         self.a3.set_xlim(None,self.sim.soc_rs[-1])
-        a4_dict = self.sim.get_blocking_probability()
+        a4_dict = self.sim.get_blocking_probability(numerical=True)
+        a4_dict2 = self.sim.get_blocking_probability()
         self.a4.cla()
         self.a4.set_xlabel(XLABEL)
         self.a4.set_ylabel("Blocking probability (%)")
         self.a4.plot(list(a4_dict.keys()),list(a4_dict.values()))
+        self.a4.stem(list(a4_dict2.keys()),list(a4_dict2.values()),use_line_collection=True,bottom=-1,linefmt="C3-",markerfmt="C3o")
+        self.a4.legend(LEGEND)
         self.a4.set_xticks(self.sim.soc_rs)
         self.a4.set_ylim(0,None)
         self.a4.set_xlim(None,self.sim.soc_rs[-1])
-        a5_dict = self.sim.get_mean_waiting_time()
+        a5_dict = self.sim.get_mean_waiting_time(numerical=True)
+        a5_dict2 = self.sim.get_mean_waiting_time()
         self.a5.cla()
         self.a5.set_xlabel(XLABEL)
         self.a5.set_ylabel("Mean waiting time (minutes)")
         self.a5.plot(list(a5_dict.keys()),list(a5_dict.values()))
+        self.a5.stem(list(a5_dict2.keys()),list(a5_dict2.values()),use_line_collection=True,bottom=-1,linefmt="C3-",markerfmt="C3o")
+        self.a5.legend(LEGEND)
         self.a5.set_xticks(self.sim.soc_rs)
         self.a5.set_ylim(0,None)
         self.a5.set_xlim(None,self.sim.soc_rs[-1])
@@ -264,12 +296,85 @@ class SingleClassWindow:
     
     #TODO finish the visualization logic
     def open_visual_window(self):
+        try:
+            self.soc_r_vis_val.get()
+            self.time_vis_val.get()
+        except tk.TclError:
+            return
         if self.root_window.model_visual_window:
             self.root_window.model_visual_window.destroy()
             self.root_window.model_visual_window = None
         self.root_window.model_visual_window = tk.Toplevel(self.root_window.model_result_window)
         self.root_window.model_visual_window.config(bg="#fff")
         self.root_window.model_visual_window.grid()
+        self.rt_env = RealtimeEnvironment(factor=0.1,strict=False)
+        self.canvas = tk.Canvas(self.root_window.model_visual_window,
+            width=max(450,self.sim.s*75),height=350,bg="#fff")
+        self.canvas.grid()
+        self.charger_img = tk.PhotoImage(file = "images/charger.gif")
+        self.pev_img = tk.PhotoImage(file = "images/pev.gif")
+        for i in range(self.sim.s):
+            x = 25+75*i
+            self.canvas.create_image(x, 20, anchor = tk.NW, image = self.charger_img)
+        self.i = 0
+        self.temp_soc_r_vis = float(self.soc_r_vis_val.get())
+        self.total_charge_time = 0
+        self.total_wait_time = 0
+        self.canvas.create_rectangle(230, 200, 420, 280, fill="#fff")
+        self.time = self.canvas.create_text(240, 210, text = "Time = "+str(round(self.rt_env.now, 1))+"m", anchor = tk.NW)
+        self.charge_time = self.canvas.create_text(240, 235, text = "Average Charge time = 0", anchor = tk.NW)
+        self.wait_time = self.canvas.create_text(240, 260, text = "Average Wait time = 0", anchor = tk.NW)
+        self.pev_icons = list()
+        self.waiting_cars = list()
+        self.waiting_cars_num = self.canvas.create_text(25, 150, text = "# of waiting cars: "+str(len(self.waiting_cars)), anchor = tk.NW)
+        self.rt_env.process(self.visualize())
+        self.rt_env.run(until=self.time_vis_val.get())
+        self.canvas.update()
+    
+    def visualize(self):
+        while True:
+            yield self.rt_env.timeout(0.1)
+            self.tick()
+    
+    def tick(self):
+        self.canvas.delete(self.time)
+        self.time = self.canvas.create_text(240, 210, text = "Time = "+str(round(self.rt_env.now, 1))+"m", anchor = tk.NW)
+        if self.i > 0:
+            self.canvas.delete(self.charge_time)
+            self.canvas.delete(self.wait_time)
+            self.canvas.delete(self.waiting_cars_num)
+            self.charge_time = self.canvas.create_text(240, 235, text = "Average Charge time = "+str(round(self.total_charge_time/self.i if self.i else 0, 1)), anchor = tk.NW)
+            self.wait_time = self.canvas.create_text(240, 260, text = "Average Wait time = "+str(round(self.total_wait_time/self.i if self.i else 0, 1)), anchor = tk.NW)
+            self.waiting_cars_num = self.canvas.create_text(25, 150, text = "# of waiting cars: "+str(len(self.waiting_cars)), anchor = tk.NW)       
+        if self.rt_env.now >= self.sim.pevs[self.temp_soc_r_vis].at[self.i+1,"arrival_time"]:
+            self.i += 1
+            if not self.sim.pevs[self.temp_soc_r_vis].at[self.i,"blocked"]:
+                if self.sim.pevs[self.temp_soc_r_vis].at[self.i,"arrival_time"] == self.sim.pevs[self.temp_soc_r_vis].at[self.i+1,"start_time"]:
+                    x = 25+75*(self.sim.pevs[self.temp_soc_r_vis].at[self.i,"charger"]-1)
+                    self.pev_icons.append(
+                        (self.i,
+                        self.canvas.create_image(x, 50, anchor = tk.NW, image = self.pev_img),
+                        self.canvas.create_text(x, 85, text = "PEV #"+str(self.i), anchor = tk.NW))
+                    )
+                else:
+                    self.waiting_cars.append(self.i)
+        for car in self.pev_icons:
+            self.total_charge_time += 0.1
+            if self.rt_env.now >= self.sim.pevs[self.temp_soc_r_vis].at[car[0],"departure_time"]:
+                self.canvas.delete(car[1])
+                self.canvas.delete(car[2])
+                self.pev_icons.remove(car)
+        for car in self.waiting_cars:
+            self.total_wait_time += 0.1
+            if self.rt_env.now >= self.sim.pevs[self.temp_soc_r_vis].at[car,"start_time"]:
+                x = 25+75*(self.sim.pevs[self.temp_soc_r_vis].at[self.i,"charger"]-1)
+                self.pev_icons.append(
+                    (self.i,
+                    self.canvas.create_image(x, 50, anchor = tk.NW, image = self.pev_img),
+                    self.canvas.create_text(x, 85, text = "PEV #"+str(self.i), anchor = tk.NW))
+                )
+                self.waiting_cars.remove(car)
+        self.canvas.update()
 
 class RootWindow:
     def __init__(self):
