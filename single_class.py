@@ -1,4 +1,4 @@
-from math import log
+from math import (log,sqrt,exp,factorial)
 import pandas as pd
 import random
 
@@ -142,7 +142,6 @@ class Simulation:
         charging_station = ChargingStation(self.env, self.s, self.r)
         i = 0
         while True:
-            #TODO try a different way of doing this timeout (to mediate the discrepancies with the results from the paper)
             # wait time until next PEV has to be introduced to the simulation
             yield self.env.timeout(random.expovariate(self.lam/60))
             i += 1
@@ -154,42 +153,71 @@ class Simulation:
                 charging_station.admission = False
     
     def get_mean_charging_time(self):
-        #TODO add calculation results too
         temp1 = dict()
         for soc_r in self.soc_rs:
             temp2 = self.pevs[soc_r][self.pevs[soc_r]["blocked"]==False]
             temp1[soc_r] = (temp2["departure_time"]-temp2["start_time"]).mean()
         return temp1
     
-    def get_mean_charging_power(self):
-        #TODO add calculation results too
+    def get_mean_charging_power(self, numerical=False):
         temp1 = dict()
-        for soc_r in self.soc_rs:
-            temp2 = self.pevs[soc_r][self.pevs[soc_r]["blocked"]==False]
-            temp1[soc_r] = temp2["mean_power"].mean()
+        if numerical:
+            t_ch = self.get_mean_charging_time()
+            for soc_r in self.soc_rs:
+                temp2 = self.pevs[soc_r][self.pevs[soc_r]["blocked"]==False]
+                temp1[soc_r] = 60.0*self.e_max*(soc_r - temp2["soc_i"].mean())/t_ch[soc_r]
+        else:
+            for soc_r in self.soc_rs:
+                temp2 = self.pevs[soc_r][self.pevs[soc_r]["blocked"]==False]
+                temp1[soc_r] = temp2["mean_power"].mean()
         return temp1
     
     def get_traffic_intensity(self):
-        #TODO add calculation results too
         temp = dict()
         mu_over_1 = self.get_mean_charging_time()
         for soc_r in self.soc_rs:
             temp[soc_r] = mu_over_1[soc_r]*self.lam/(60*self.s)
         return temp
     
-    def get_blocking_probability(self):
-        #TODO add calculation results too
-        temp = dict()
-        for soc_r in self.soc_rs:
-            temp[soc_r] = len(self.pevs[soc_r][self.pevs[soc_r]["blocked"]==True].index)/len(self.pevs[soc_r].index)
-        return temp
-    
-    def get_mean_waiting_time(self):
-        #TODO add calculation results too
+    def get_blocking_probability(self, numerical=False):
         temp1 = dict()
-        for soc_r in self.soc_rs:
-            temp2 = self.pevs[soc_r][self.pevs[soc_r]["blocked"]==False]
-            temp1[soc_r] = (temp2["start_time"]-temp2["arrival_time"]).mean()
+        if numerical:
+            ro = self.get_traffic_intensity()
+            theta = (self.s-1.0)/(self.s+1.0)
+            f = (sqrt((9.0+theta)/(1.0-theta))-2)*theta/(8.0+8.0*theta)
+            for soc_r in self.soc_rs:
+                temp2 = self.pevs[soc_r][self.pevs[soc_r]["blocked"]==False]
+                c_s = (temp2["departure_time"]-temp2["arrival_time"]).std()/60.0
+                g = (1.0-ro[soc_r])/ro[soc_r]
+                r_d = (1.0+f*g*(1-exp(-theta/(f*g))))/2.0
+                r_g = ((1.0+c_s**2.0)*r_d)/((2.0*r_d-1.0)*c_s**2.0+1.0)
+                zeta = ro[soc_r]*r_g/(1.0-ro[soc_r])+ro[soc_r]*r_g
+                p_0 = 1.0/sum([((self.s*ro[soc_r])**j)/factorial(j)+(((self.s*ro[soc_r])**self.s)/factorial(self.s))*((1.0-ro[soc_r]*zeta**self.r)/(1.0-ro[soc_r])) for j in range(self.s)])
+                temp1[soc_r] = ((self.s*ro[soc_r])**self.s)*(zeta**self.r)*p_0/factorial(self.s)
+        else:
+            for soc_r in self.soc_rs:
+                temp1[soc_r] = len(self.pevs[soc_r][self.pevs[soc_r]["blocked"]==True].index)/len(self.pevs[soc_r].index)
+        return temp1
+    
+    def get_mean_waiting_time(self, numerical=False):
+        temp1 = dict()
+        if numerical:
+            ro = self.get_traffic_intensity()
+            theta = (self.s-1.0)/(self.s+1.0)
+            f = (sqrt((9.0+theta)/(1.0-theta))-2)*theta/(8.0+8.0*theta)
+            for soc_r in self.soc_rs:
+                temp2 = self.pevs[soc_r][self.pevs[soc_r]["blocked"]==False]
+                c_s = (temp2["departure_time"]-temp2["arrival_time"]).std()/60.0
+                g = (1.0-ro[soc_r])/ro[soc_r]
+                r_d = (1.0+f*g*(1-exp(-theta/(f*g))))/2.0
+                r_g = ((1.0+c_s**2.0)*r_d)/((2.0*r_d-1.0)*c_s**2.0+1.0)
+                zeta = ro[soc_r]*r_g/(1.0-ro[soc_r])+ro[soc_r]*r_g
+                p_0 = 1.0/sum([((self.s*ro[soc_r])**j)/factorial(j)+(((self.s*ro[soc_r])**self.s)/factorial(self.s))*((1.0-ro[soc_r]*zeta**self.r)/(1.0-ro[soc_r])) for j in range(self.s)])
+                temp1[soc_r] = 60.0*((self.s*ro[soc_r])**self.s)*zeta*(1.0-zeta**self.r-self.r*(1.0-zeta)*ro[soc_r]*zeta**(self.r-1.0))*p_0/(factorial(self.s)*(1.0-ro[soc_r])*(1.0-zeta)*self.lam)
+        else:
+            for soc_r in self.soc_rs:
+                temp2 = self.pevs[soc_r][self.pevs[soc_r]["blocked"]==False]
+                temp1[soc_r] = (temp2["start_time"]-temp2["arrival_time"]).mean()
         return temp1
     
     def get_system_revenue(self):
@@ -224,7 +252,6 @@ if __name__ == "__main__":
         c_w=C_W,
         t_ch_coefficient=T_CH_COEFFICIENT
     )
-    print(sim.get_results())
     print(sim.get_mean_charging_time())
     print(sim.get_mean_charging_power())
     print(sim.get_traffic_intensity())
