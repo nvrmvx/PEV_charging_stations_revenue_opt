@@ -23,7 +23,7 @@ BATT_DEG = {"a": 0.004,"b": 0.075,"c": 0.003}
 REWARD = {"m": 9,"n": 1}
 C_W = 20
 
-T_CH_COEFFICIENT = 9
+T_CH_COEFFICIENT = 2
 
 class Pev:
     def __init__(self, soc_r, i, e_c, p_max, sim: 'Simulation'):
@@ -131,6 +131,7 @@ class Simulation:
         for lam in self.lam:
             self.env = Environment()
             self.temp_pevs = list()
+            self.temp_lam = lam
             self.stop_event = Event(self.env)
             self.env.process(self.run_charging_station())
             self.env.run(self.stop_event)
@@ -142,6 +143,7 @@ class Simulation:
         for lam in self.lam:
             self.env = Environment()
             self.temp_pevs = list()
+            self.temp_lam = lam
             self.stop_event = Event(self.env)
             self.env.process(self.run_charging_station())
             self.env.run(self.stop_event)
@@ -155,7 +157,7 @@ class Simulation:
         i = 0
         while True:
             # wait time until next PEV has to be introduced to the simulation
-            yield self.env.timeout(random.expovariate(self.lam[self.current_pev_class]/60))
+            yield self.env.timeout(random.expovariate(self.temp_lam/60))
             i += 1
             if charging_station.admission:
                 # create a new PEV in the simulation and send it to the charging station

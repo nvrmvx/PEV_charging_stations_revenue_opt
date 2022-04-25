@@ -182,6 +182,7 @@ class SingleClassWindow:
             self.root_window.model_result_window.destroy()
             self.root_window.model_result_window = None
         self.root_window.model_result_window = tk.Toplevel(self.window)
+        self.root_window.model_result_window.title("Single Class Model Simulation Results")
         self.root_window.model_result_window.config(bg="#fff")
         self.root_window.model_result_window.grid()
         buttons_frm = tk.Frame(self.root_window.model_result_window, bg="#fff")
@@ -193,7 +194,7 @@ class SingleClassWindow:
         self.soc_r_vis.grid(column=2,row=0,padx=10,pady=(60,5))
         time_vis_label = tk.Label(buttons_frm,text="Visualization time (minutes)",background="#fff")
         time_vis_label.grid(column=1,row=1,padx=10,pady=5)
-        self.time_vis_val.set(30.0)
+        self.time_vis_val.set(150.0)
         time_vis = tk.Entry(buttons_frm,textvariable=self.time_vis_val,validate="all",validatecommand=(self.vcmd, "%P"),width=10)
         time_vis.grid(column=2,row=1,padx=10,pady=5)
         vis_button = tk.Button(buttons_frm, text="Visualize", command=self.open_visual_window)
@@ -295,6 +296,87 @@ class SingleClassWindow:
         self.a6.set_ylim(0,None)
         self.a6.set_xlim(None,self.sim.soc_rs[-1])
         self.data_plot.draw()
+
+    def open_visual_window(self):
+        try:
+            self.soc_r_vis_val.get()
+            self.time_vis_val.get()
+        except tk.TclError:
+            return
+        if self.root_window.model_visual_window:
+            self.root_window.model_visual_window.destroy()
+            self.root_window.model_visual_window = None
+        self.root_window.model_visual_window = tk.Toplevel(self.root_window.model_result_window)
+        self.root_window.model_visual_window.config(bg="#fff")
+        self.root_window.model_visual_window.grid()
+        self.rt_env = RealtimeEnvironment(factor=0.1,strict=False)
+        self.canvas = tk.Canvas(self.root_window.model_visual_window,
+            width=max(450,self.sim.s*75),height=350,bg="#fff")
+        self.canvas.grid()
+        self.charger_img = tk.PhotoImage(file = "images/charger.gif")
+        self.pev_img = tk.PhotoImage(file = "images/pev.gif")
+        for i in range(self.sim.s):
+            x = 25+75*i
+            self.canvas.create_image(x, 20, anchor = tk.NW, image = self.charger_img)
+        self.i = 0
+        self.temp_soc_r_vis = float(self.soc_r_vis_val.get())
+        self.total_charge_time = 0
+        self.total_wait_time = 0
+        self.canvas.create_rectangle(230, 200, 420, 280, fill="#fff")
+        self.time = self.canvas.create_text(240, 210, text = "Time = "+str(round(self.rt_env.now, 1))+"m", anchor = tk.NW)
+        self.charge_time = self.canvas.create_text(240, 235, text = "Average Charge time = 0", anchor = tk.NW)
+        self.wait_time = self.canvas.create_text(240, 260, text = "Average Wait time = 0", anchor = tk.NW)
+        self.pev_icons = list()
+        self.waiting_cars = list()
+        self.waiting_cars_num = self.canvas.create_text(25, 150, text = "# of waiting cars: "+str(len(self.waiting_cars)), anchor = tk.NW)
+        self.rt_env.process(self.visualize())
+        self.rt_env.run(until=self.time_vis_val.get())
+        self.canvas.update()
+
+    def visualize(self):
+        while True:
+            yield self.rt_env.timeout(0.1)
+            self.tick()
+
+    def tick(self):
+        self.canvas.delete(self.time)
+        self.time = self.canvas.create_text(240, 210, text = "Time = "+str(round(self.rt_env.now, 1))+"m", anchor = tk.NW)
+        if self.i > 0:
+            self.canvas.delete(self.charge_time)
+            self.canvas.delete(self.wait_time)
+            self.canvas.delete(self.waiting_cars_num)
+            self.charge_time = self.canvas.create_text(240, 235, text = "Average Charge time = "+str(round(self.total_charge_time/self.i if self.i else 0, 1)), anchor = tk.NW)
+            self.wait_time = self.canvas.create_text(240, 260, text = "Average Wait time = "+str(round(self.total_wait_time/self.i if self.i else 0, 1)), anchor = tk.NW)
+            self.waiting_cars_num = self.canvas.create_text(25, 150, text = "# of waiting cars: "+str(len(self.waiting_cars)), anchor = tk.NW)       
+        if self.rt_env.now >= self.sim.pevs[self.temp_soc_r_vis].at[self.i+1,"arrival_time"]:
+            self.i += 1
+            if not self.sim.pevs[self.temp_soc_r_vis].at[self.i,"blocked"]:
+                if self.sim.pevs[self.temp_soc_r_vis].at[self.i,"arrival_time"] == self.sim.pevs[self.temp_soc_r_vis].at[self.i+1,"start_time"]:
+                    x = 25+75*(self.sim.pevs[self.temp_soc_r_vis].at[self.i,"charger"]-1)
+                    self.pev_icons.append(
+                        (self.i,
+                        self.canvas.create_image(x, 50, anchor = tk.NW, image = self.pev_img),
+                        self.canvas.create_text(x, 85, text = "PEV #"+str(self.i), anchor = tk.NW))
+                    )
+                else:
+                    self.waiting_cars.append(self.i)
+        for car in self.pev_icons:
+            self.total_charge_time += 0.1
+            if self.rt_env.now >= self.sim.pevs[self.temp_soc_r_vis].at[car[0],"departure_time"]:
+                self.canvas.delete(car[1])
+                self.canvas.delete(car[2])
+                self.pev_icons.remove(car)
+        for car in self.waiting_cars:
+            self.total_wait_time += 0.1
+            if self.rt_env.now >= self.sim.pevs[self.temp_soc_r_vis].at[car,"start_time"]:
+                x = 25+75*(self.sim.pevs[self.temp_soc_r_vis].at[self.i,"charger"]-1)
+                self.pev_icons.append(
+                    (self.i,
+                    self.canvas.create_image(x, 50, anchor = tk.NW, image = self.pev_img),
+                    self.canvas.create_text(x, 85, text = "PEV #"+str(self.i), anchor = tk.NW))
+                )
+                self.waiting_cars.remove(car)
+        self.canvas.update()
 
 class MultiClassDedicatedWindow:
     def __init__(self,root_window: "RootWindow"):
@@ -463,6 +545,7 @@ class MultiClassDedicatedWindow:
             self.root_window.model_result_window.destroy()
             self.root_window.model_result_window = None
         self.root_window.model_result_window = tk.Toplevel(self.window)
+        self.root_window.model_result_window.title("Multi-Class Dedicated Model Simulation Results")
         self.root_window.model_result_window.config(bg="#fff")
         self.root_window.model_result_window.grid()
         buttons_frm = tk.Frame(self.root_window.model_result_window, bg="#fff")
@@ -539,6 +622,233 @@ class MultiClassDedicatedWindow:
         self.a4.set_xlim(None,self.sim.lam[-1])
         self.data_plot.draw()
 
+class MultiClassSharedWindow:
+    def __init__(self,root_window: "RootWindow"):
+        self.sim = None
+        self.root_window = root_window
+        self.window = tk.Toplevel(self.root_window.root)
+        self.window.title("Multi-Class Shared Model Simulation Configuration")
+        self.window.resizable(width=False,height=False)
+        self.window.config(bg="#fff")
+        self.window.grid()
+        self.theta0_val = tk.DoubleVar(self.window)
+        self.theta0_val.set(multiclass_shared.THETA[0])
+        self.theta1_val = tk.DoubleVar(self.window)
+        self.theta1_val.set(multiclass_shared.THETA[1])
+        self.pev_num_val = tk.IntVar(self.window)
+        self.pev_num_val.set(multiclass_shared.PEV_NUM)
+        self.lam_val = tk.StringVar(self.window)
+        self.lam_val.set(str(multiclass_shared.LAM)[1:-1].replace(" ",""))
+        self.s_val = tk.IntVar(self.window)
+        self.s_val.set(multiclass_shared.S)
+        self.r0_val = tk.IntVar(self.window)
+        self.r0_val.set(multiclass_shared.R[0])
+        self.r1_val = tk.IntVar(self.window)
+        self.r1_val.set(multiclass_shared.R[1])
+        self.soc_r_val = tk.DoubleVar(self.window)
+        self.soc_r_val.set(multiclass_shared.SOC_R)
+        self.soc_i_mu_val = tk.DoubleVar(self.window)
+        self.soc_i_mu_val.set(multiclass_shared.SOC_I_MU)
+        self.soc_i_sigma_val = tk.DoubleVar(self.window)
+        self.soc_i_sigma_val.set(multiclass_shared.SOC_I_SIGMA)
+        self.p_max0_val = tk.DoubleVar(self.window)
+        self.p_max0_val.set(multiclass_shared.P_MAX[0])
+        self.p_max1_val = tk.DoubleVar(self.window)
+        self.p_max1_val.set(multiclass_shared.P_MAX[1])
+        self.e_max_val = tk.DoubleVar(self.window)
+        self.e_max_val.set(multiclass_shared.E_MAX)
+        self.e_c0_val = tk.DoubleVar(self.window)
+        self.e_c0_val.set(multiclass_shared.E_C[0])
+        self.e_c1_val = tk.DoubleVar(self.window)
+        self.e_c1_val.set(multiclass_shared.E_C[1])
+        self.t_ch_coefficient_val = tk.DoubleVar(self.window)
+        self.t_ch_coefficient_val.set(multiclass_shared.T_CH_COEFFICIENT)
+        self.batt_deg_a_val = tk.DoubleVar(self.window)
+        self.batt_deg_a_val.set(multiclass_shared.BATT_DEG["a"])
+        self.batt_deg_b_val = tk.DoubleVar(self.window)
+        self.batt_deg_b_val.set(multiclass_shared.BATT_DEG["b"])
+        self.batt_deg_c_val = tk.DoubleVar(self.window)
+        self.batt_deg_c_val.set(multiclass_shared.BATT_DEG["c"])
+        self.reward_m_val = tk.DoubleVar(self.window)
+        self.reward_m_val.set(multiclass_shared.REWARD["m"])
+        self.reward_n_val = tk.DoubleVar(self.window)
+        self.reward_n_val.set(multiclass_shared.REWARD["n"])
+        self.c_w_val = tk.DoubleVar(self.window)
+        self.c_w_val.set(multiclass_shared.C_W)
+
+        self.vcmd = (self.window.register(validate_value))
+        self.vcmd2 = (self.window.register(validate_value_with_commas))
+        pev_num_label = tk.Label(self.window,text="PEV number",background="#fff")
+        pev_num_label.grid(column=0,row=0,padx=10,pady=5)
+        pev_num = tk.Entry(self.window,textvariable=self.pev_num_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#fff")
+        pev_num.grid(column=1,row=0,padx=10,pady=5)
+        lam_label = tk.Label(self.window,text="Lambda (separated by commas)",background="#fff")
+        lam_label.grid(column=0,row=1,padx=10,pady=5)
+        lam = tk.Entry(self.window,textvariable=self.lam_val,validate="all",validatecommand=(self.vcmd2, "%P"),width=7,background="#fff")
+        lam.grid(column=1,row=1,padx=10,pady=5)
+        s_label = tk.Label(self.window,text="Charger number",background="#fff")
+        s_label.grid(column=0,row=2,padx=10,pady=5)
+        s = tk.Entry(self.window,textvariable=self.s_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#fff")
+        s.grid(column=1,row=2,padx=10,pady=5)
+        r_label = tk.Label(self.window,text="Waiting space number",background="#fff")
+        r_label.grid(column=0,row=3,padx=10,pady=5)
+        r0 = tk.Entry(self.window,textvariable=self.r0_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#fff")
+        r0.grid(column=1,row=3,padx=10,pady=5)
+        r1 = tk.Entry(self.window,textvariable=self.r1_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#fff")
+        r1.grid(column=1,row=4,padx=10,pady=5)
+        self.soc_r_label = tk.Label(self.window,text="SoC r",background="#fff")
+        self.soc_r_label.grid(column=0,row=5,padx=10,pady=5)
+        self.soc_r = tk.Entry(self.window,textvariable=self.soc_r_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#999")
+        self.soc_r.grid(column=1,row=5,padx=10,pady=5)
+        soc_i_mu_label = tk.Label(self.window,text="SoC i mu",background="#fff")
+        soc_i_mu_label.grid(column=2,row=0,padx=10,pady=5)
+        soc_i_mu = tk.Entry(self.window,textvariable=self.soc_i_mu_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#999")
+        soc_i_mu.grid(column=3,row=0,padx=10,pady=5)
+        soc_i_sigma_label = tk.Label(self.window,text="SoC i sigma",background="#fff")
+        soc_i_sigma_label.grid(column=2,row=1,padx=10,pady=5)
+        soc_i_sigma = tk.Entry(self.window,textvariable=self.soc_i_sigma_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#999")
+        soc_i_sigma.grid(column=3,row=1,padx=10,pady=5)
+        p_max_label = tk.Label(self.window,text="P max",background="#fff")
+        p_max_label.grid(column=2,row=2,padx=10,pady=5)
+        p_max0 = tk.Entry(self.window,textvariable=self.p_max0_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#999")
+        p_max0.grid(column=3,row=2,padx=10,pady=5)
+        p_max1 = tk.Entry(self.window,textvariable=self.p_max1_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#999")
+        p_max1.grid(column=3,row=3,padx=10,pady=5)
+        e_max_label = tk.Label(self.window,text="E max",background="#fff")
+        e_max_label.grid(column=2,row=4,padx=10,pady=5)
+        e_max = tk.Entry(self.window,textvariable=self.e_max_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#999")
+        e_max.grid(column=3,row=4,padx=10,pady=5)
+        e_c_label = tk.Label(self.window,text="E c",background="#fff")
+        e_c_label.grid(column=2,row=5,padx=10,pady=5)
+        e_c0 = tk.Entry(self.window,textvariable=self.e_c0_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#999")
+        e_c0.grid(column=3,row=5,padx=10,pady=5)
+        e_c1 = tk.Entry(self.window,textvariable=self.e_c1_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#999")
+        e_c1.grid(column=3,row=6,padx=10,pady=5)
+        t_ch_coefficient_label = tk.Label(self.window,text="Charging time coefficient",background="#fff")
+        t_ch_coefficient_label.grid(column=2,row=7,padx=10,pady=5)
+        t_ch_coefficient = tk.Entry(self.window,textvariable=self.t_ch_coefficient_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#999")
+        t_ch_coefficient.grid(column=3,row=7,padx=10,pady=5)
+        batt_deg_a_label = tk.Label(self.window,text="Battery degradation a",background="#fff")
+        batt_deg_a_label.grid(column=4,row=0,padx=10,pady=5)
+        batt_deg_a = tk.Entry(self.window,textvariable=self.batt_deg_a_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#999")
+        batt_deg_a.grid(column=5,row=0,padx=10,pady=5)
+        batt_deg_b_label = tk.Label(self.window,text="Battery degradation b",background="#fff")
+        batt_deg_b_label.grid(column=4,row=1,padx=10,pady=5)
+        batt_deg_b = tk.Entry(self.window,textvariable=self.batt_deg_b_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#999")
+        batt_deg_b.grid(column=5,row=1,padx=10,pady=5)
+        batt_deg_c_label = tk.Label(self.window,text="Battery degradation c",background="#fff")
+        batt_deg_c_label.grid(column=4,row=2,padx=10,pady=5)
+        batt_deg_c = tk.Entry(self.window,textvariable=self.batt_deg_c_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#999")
+        batt_deg_c.grid(column=5,row=2,padx=10,pady=5)
+        reward_m_label = tk.Label(self.window,text="Reward m",background="#fff")
+        reward_m_label.grid(column=4,row=3,padx=10,pady=5)
+        reward_m = tk.Entry(self.window,textvariable=self.reward_m_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#999")
+        reward_m.grid(column=5,row=3,padx=10,pady=5)
+        reward_n_label = tk.Label(self.window,text="Reward n",background="#fff")
+        reward_n_label.grid(column=4,row=4,padx=10,pady=5)
+        reward_n = tk.Entry(self.window,textvariable=self.reward_n_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#999")
+        reward_n.grid(column=5,row=4,padx=10,pady=5)
+        c_w_label = tk.Label(self.window,text="Waiting cost",background="#fff")
+        c_w_label.grid(column=4,row=5,padx=10,pady=5)
+        c_w = tk.Entry(self.window,textvariable=self.c_w_val,validate="all",validatecommand=(self.vcmd, "%P"),width=7,background="#999")
+        c_w.grid(column=5,row=5,padx=10,pady=5)
+        sim_button = tk.Button(self.window, text="Simulate", command=self.open_result_window)
+        sim_button.grid(column=1,row=6,padx=10,pady=5)
+    
+    def open_result_window(self):
+        if self.lam_val.get() == "":
+            return
+        try:
+            self.theta0_val.get()
+            self.theta1_val.get()
+            self.pev_num_val.get()
+            self.lam_val.get()
+            self.s_val.get()
+            self.r0_val.get()
+            self.r1_val.get()
+            self.soc_i_mu_val.get()
+            self.soc_i_sigma_val.get()
+            self.p_max0_val.get()
+            self.p_max1_val.get()
+            self.e_max_val.get()
+            self.e_c0_val.get()
+            self.e_c1_val.get()
+            self.batt_deg_a_val.get()
+            self.batt_deg_b_val.get()
+            self.batt_deg_c_val.get()
+            self.reward_m_val.get()
+            self.reward_n_val.get()
+            self.c_w_val.get()
+            self.t_ch_coefficient_val.get()
+        except tk.TclError:
+            return
+        if self.root_window.model_visual_window:
+            self.root_window.model_visual_window.destroy()
+            self.root_window.model_visual_window = None
+        if self.root_window.model_result_window:
+            self.root_window.model_result_window.destroy()
+            self.root_window.model_result_window = None
+        self.root_window.model_result_window = tk.Toplevel(self.window)
+        self.root_window.model_result_window.title("Multi-Class Shared Model Simulation Results")
+        self.root_window.model_result_window.config(bg="#fff")
+        self.root_window.model_result_window.grid()
+        buttons_frm = tk.Frame(self.root_window.model_result_window, bg="#fff")
+        sim_button = tk.Button(buttons_frm, text="Re-Simulate", command=self.simulate)
+        sim_button.grid(column=0,row=0,pady=(60,5))
+        buttons_frm.grid()
+        fig = plt.Figure(figsize=(2, 3), dpi=72)
+        self.a1 = fig.add_subplot(221)
+        self.a2 = fig.add_subplot(222)
+        self.a3 = fig.add_subplot(223)
+        self.data_plot = FigureCanvasTkAgg(fig, master=self.root_window.model_result_window)
+        self.data_plot.get_tk_widget().config(height=550,width=800)
+        self.data_plot.get_tk_widget().grid()
+        self.simulate()
+    
+    def simulate(self):
+        self.sim = multiclass_shared.Simulation(
+            theta=[float(self.theta0_val.get()),float(self.theta1_val.get())],
+            pev_num=int(self.pev_num_val.get()),
+            lam=sorted([float(num) for num in self.lam_val.get().split(",") if num != ""]),
+            s=int(self.s_val.get()),
+            r=[int(self.r0_val.get()),int(self.r1_val.get())],
+            soc_r=float(self.soc_r_val.get()),
+            soc_i_mu=self.soc_i_mu_val.get(),
+            soc_i_sigma=self.soc_i_sigma_val.get(),
+            p_max=[self.p_max0_val.get(),self.p_max1_val.get()],
+            e_max=self.e_max_val.get(),
+            e_c=[self.e_c0_val.get(),self.e_c1_val.get()],
+            batt_deg={"a": self.batt_deg_a_val.get(),"b": self.batt_deg_b_val.get(),"c": self.batt_deg_c_val.get()},
+            reward={"m": self.reward_m_val.get(),"n": self.reward_n_val.get()},
+            c_w=self.c_w_val.get(),
+            t_ch_coefficient=self.t_ch_coefficient_val.get()
+        )
+        a1_dict = self.sim.get_traffic_intensity()
+        self.a1.cla()
+        self.a1.set_xlabel(XLABEL_LAM)
+        self.a1.set_ylabel("Traffic intensity")
+        self.a1.plot(list(a1_dict.keys()),list(a1_dict.values()))
+        self.a1.set_xticks(self.sim.lam)
+        self.a1.set_ylim(0,None)
+        self.a1.set_xlim(None,self.sim.lam[-1])
+        a2_dict = self.sim.get_blocking_probability()
+        self.a2.cla()
+        self.a2.set_xlabel(XLABEL_LAM)
+        self.a2.set_ylabel("Class blocking probability")
+        self.a2.plot(list(a2_dict.keys()),list(a2_dict.values()))
+        self.a2.set_xticks(self.sim.lam)
+        self.a2.set_ylim(0,None)
+        self.a2.set_xlim(None,self.sim.lam[-1])
+        a3_dict = self.sim.get_system_revenue()
+        self.a3.cla()
+        self.a3.set_xlabel(XLABEL_LAM)
+        self.a3.set_ylabel("Class revenue")
+        self.a3.plot(list(a3_dict.keys()),list(a3_dict.values()))
+        self.a3.set_xticks(self.sim.lam)
+        self.a3.set_ylim(0,None)
+        self.a3.set_xlim(None,self.sim.lam[-1])
+        self.data_plot.draw()
+
 class RootWindow:
     def __init__(self):
         self.root = tk.Tk()
@@ -572,7 +882,7 @@ class RootWindow:
         if self.model_type_val.get() == MODEL_NAMES[1]:
             self.model_config_window = MultiClassDedicatedWindow(self)
         if self.model_type_val.get() == MODEL_NAMES[2]:
-            print(f"{MODEL_NAMES[2]} window is supposed to show up here")
+            self.model_config_window = MultiClassSharedWindow(self)
 
 if __name__ == "__main__":
     RootWindow()
